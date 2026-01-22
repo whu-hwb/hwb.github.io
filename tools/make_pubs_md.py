@@ -113,6 +113,50 @@ def _get_year(entry: BibEntry) -> Optional[int]:
     except ValueError:
         return None
 
+def _get_month(entry: BibEntry) -> int:
+    """
+    Return month as 1-12 if available; otherwise 0.
+    Accepts numeric month, abbreviations (jan/feb/...), or full month names.
+    """
+    m = entry.fields.get("month", "").strip().lower()
+    if not m:
+        return 0
+
+    # numeric month
+    m_num = re.search(r"\d{1,2}", m)
+    if m_num:
+        val = int(m_num.group(0))
+        if 1 <= val <= 12:
+            return val
+
+    # textual month
+    month_map = {
+        "jan": 1, "january": 1,
+        "feb": 2, "february": 2,
+        "mar": 3, "march": 3,
+        "apr": 4, "april": 4,
+        "may": 5,
+        "jun": 6, "june": 6,
+        "jul": 7, "july": 7,
+        "aug": 8, "august": 8,
+        "sep": 9, "sept": 9, "september": 9,
+        "oct": 10, "october": 10,
+        "nov": 11, "november": 11,
+        "dec": 12, "december": 12,
+    }
+    # month may be like "{Jan}" already stripped, so just map directly
+    return month_map.get(m, 0)
+
+def _time_sort_key_desc(entry: BibEntry) -> Tuple[int, int, str, str]:
+    """
+    Sort key for descending time:
+    (year, month, venue, title) in descending for year/month,
+    venue/title in ascending to stabilize.
+    """
+    y = _get_year(entry) or 0
+    mo = _get_month(entry)
+    return (y, mo, _venue(entry).lower(), _title(entry).lower())
+
 def _authors(entry: BibEntry) -> str:
     a = entry.fields.get("author", "").strip()
     if not a:
@@ -182,8 +226,9 @@ def main():
             # Later files override earlier ones for same key (manual can override dblp if needed)
             all_entries[e.key] = e
 
-    # Group by year
+    # Group by year, but put <2020 into one bucket
     grouped: Dict[int, List[BibEntry]] = {}
+    before_2020: List[BibEntry] = []
     no_year: List[BibEntry] = []
 
     for e in all_entries.values():
@@ -191,29 +236,46 @@ def main():
         if y is None:
             no_year.append(e)
             continue
-        grouped.setdefault(y, []).append(e)
+        if y < 2020:
+            before_2020.append(e)
+        else:
+            grouped.setdefault(y, []).append(e)
 
-    # Sort years desc
+    # Years desc (>=2020)
     years = sorted(grouped.keys(), reverse=True)
 
-    # Sort entries within year: journal/articles first, then by title
-    def rank(et: str) -> int:
-        return 0 if et == "article" else 1
-
+    # Sort entries within each year by time descending (month desc), then stable fields
+    # Python sort is ascending, so we sort by key and set reverse=True for year/month effect.
+    # We'll build a key and reverse, but venue/title should remain stable; simplest:
     for y in years:
-        grouped[y].sort(key=lambda x: (rank(x.entry_type), _venue(x).lower(), _title(x).lower()))
+        grouped[y].sort(key=_time_sort_key_desc, reverse=True)
+
+    # Sort before_2020 bucket also by time descending
+    before_2020.sort(key=_time_sort_key_desc, reverse=True)
+
+    # Sort no_year bucket (optional)
+    no_year.sort(key=lambda x: (_title(x).lower(), x.key.lower()))
 
     # Write markdown
     lines: List[str] = []
+
+    # normal years (>=2020)
     for y in years:
         lines.append(f"### {y}")
         for e in grouped[y]:
             lines.append(format_item(e))
-        lines.append("")  # blank line
+        lines.append("")
 
+    # before 2020 group: numbered "第一篇/第二篇..."
+    if before_2020:
+        lines.append("### Before 2020")
+        for e in before_2020:
+            lines.append(format_item(e))
+        lines.append("")
+
+    # keep no-year items if any
     if no_year:
         lines.append("### Others (no year)")
-        no_year.sort(key=lambda x: (_title(x).lower(), x.key.lower()))
         for e in no_year:
             lines.append(format_item(e))
         lines.append("")
