@@ -20,7 +20,7 @@ editor:
 - 邮箱：hwb@whu.edu.cn
 - 电话：027-68775617
 - 办公：武汉市武汉大学计算机学院
-- Github: <https://github.com/hwb>
+- Github: <https://github.com/whu-hwb>
 - 个人主页：<https://whu-hwb.github.io>
 
 ## 教育和工作背景
